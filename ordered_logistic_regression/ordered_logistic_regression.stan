@@ -20,8 +20,8 @@ transformed parameters{
 model{
   
   // priors
-  z ~ normal(0, 20);
-  sigma ~ normal(0, 20);
+  z ~ normal(0, 1);
+  sigma ~ normal(0, 1);
   
   cutpoints ~ normal(0, 20);
   
