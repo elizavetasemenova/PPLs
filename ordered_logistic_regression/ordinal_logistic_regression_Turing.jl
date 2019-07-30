@@ -1,4 +1,5 @@
 
+# ### Import libraries
 using CSV
 using DataFrames
 using Turing
@@ -7,6 +8,7 @@ using StatsBase
 using StatsFuns: logistic
 using MLBase
 
+# ### Prepare data
 df = CSV.read("WVS.csv")
 deletecols!(df, :Column1)
 y = convert(Array, df[:y])
@@ -15,6 +17,7 @@ println(typeof(X))
 println(typeof(y))
 println(countmap(y))
 
+# ### Define the custom distribution
 struct OrderedLogistic{T1, T2} <: DiscreteUnivariateDistribution
    η::T1
    cutpoints::Vector{T2}
@@ -37,7 +40,7 @@ function Distributions.logpdf(d::OrderedLogistic, k::Int)
     return(logp)
 end
 
-### Turing model
+# ### Model specification
 @model m(X, y) = begin
 
     D = size(X, 2)
@@ -50,7 +53,7 @@ end
     c2 = c1 + exp(log_diff_c)
     c = [c1, c2]
     
-    beta ~ MvNormal(zeros(D), sigma * ones(D))
+    beta ~ MvNormal(zeros(D), sigma * ones(D))
 
     lp = X * beta
 
@@ -60,9 +63,11 @@ end
     end
 end
 
+# ### Sampling
 steps = 10000
 chain = sample(m(X, y), NUTS(steps, 0.65));
 
+# ### Parameter estimates
 show(chain)
 
 e_log_diff_c = exp.(chain[:log_diff_c].value.data)[:,1,1]
@@ -76,6 +81,7 @@ histogram(c1_est , bar_width=0.04, legend=false, title="Posterior distributions 
 histogram!(c2_est )
 savefig("posterior_plot.png" )
 
+# ### Predictions: make by hand. Need to define additionally randon number generator for the Ordered Logistic distribution
 function Distributions.rand(d::OrderedLogistic)
     cutpoints = d.cutpoints
     η = d.η  
@@ -130,9 +136,7 @@ end
 y_pred = convert(Array{Int64,1}, y_pred);
 countmap(y_pred)
 
+# ### Accuracy, confusion matrix
 mean(y .== y_pred)
 
 C = confusmat(3, y, y_pred)
-
-
-
