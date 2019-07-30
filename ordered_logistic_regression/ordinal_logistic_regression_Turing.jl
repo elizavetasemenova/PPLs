@@ -61,8 +61,7 @@ end
 end
 
 steps = 10000
-#chain = sample(m(X, y), NUTS(steps, 0.65));
-chain = sample(m(X, y), HMC(steps, 5e-3, 5));
+chain = sample(m(X, y), NUTS(steps, 0.65));
 
 show(chain)
 
@@ -71,6 +70,11 @@ c1_est = chain[:c1].value.data[:,1,1]
 c2_est = c1_est + e_log_diff_c;
 println(mean(c1_est))
 println(mean(c2_est))
+
+# bonus: plots of posterior distributions
+histogram(c1_est , bar_width=0.04, legend=false, title="Posterior distributions in Julia / Turing", yaxis=nothing)
+histogram!(c2_est )
+savefig("posterior_plot.png" )
 
 function Distributions.rand(d::OrderedLogistic)
     cutpoints = d.cutpoints
@@ -129,5 +133,6 @@ countmap(y_pred)
 mean(y .== y_pred)
 
 C = confusmat(3, y, y_pred)
+
 
 
