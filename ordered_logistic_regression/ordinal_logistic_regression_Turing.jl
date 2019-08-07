@@ -1,5 +1,4 @@
 
-# ### Import libraries
 using CSV
 using DataFrames
 using Turing
@@ -7,8 +6,9 @@ using Plots
 using StatsBase
 using StatsFuns: logistic
 using MLBase
+using KernelDensity
+using Statistics
 
-# ### Prepare data
 df = CSV.read("WVS.csv")
 deletecols!(df, :Column1)
 y = convert(Array, df[:y])
@@ -17,7 +17,6 @@ println(typeof(X))
 println(typeof(y))
 println(countmap(y))
 
-# ### Define the custom distribution
 struct OrderedLogistic{T1, T2} <: DiscreteUnivariateDistribution
    η::T1
    cutpoints::Vector{T2}
@@ -40,7 +39,7 @@ function Distributions.logpdf(d::OrderedLogistic, k::Int)
     return(logp)
 end
 
-# ### Model specification
+### Turing model
 @model m(X, y) = begin
 
     D = size(X, 2)
@@ -53,7 +52,7 @@ end
     c2 = c1 + exp(log_diff_c)
     c = [c1, c2]
     
-    beta ~ MvNormal(zeros(D), sigma * ones(D))
+    beta ~ MvNormal(zeros(D), sigma * ones(D))
 
     lp = X * beta
 
@@ -63,11 +62,9 @@ end
     end
 end
 
-# ### Sampling
 steps = 10000
 chain = sample(m(X, y), NUTS(steps, 0.65));
 
-# ### Parameter estimates
 show(chain)
 
 e_log_diff_c = exp.(chain[:log_diff_c].value.data)[:,1,1]
@@ -77,11 +74,10 @@ println(mean(c1_est))
 println(mean(c2_est))
 
 # bonus: plots of posterior distributions
-histogram(c1_est , bar_width=0.04, legend=false, title="Posterior distributions in Julia / Turing", yaxis=nothing)
-histogram!(c2_est )
-savefig("posterior_plot.png" )
+#histogram(c1_est , bar_width=0.04, legend=false, title="Posterior distributions in Julia / Turing", yaxis=nothing)
+#histogram!(c2_est )
+#savefig("posterior_plot.png" )
 
-# ### Predictions: make by hand. Need to define additionally randon number generator for the Ordered Logistic distribution
 function Distributions.rand(d::OrderedLogistic)
     cutpoints = d.cutpoints
     η = d.η  
@@ -107,6 +103,7 @@ beta_est = chain[:beta].value.data[:,:,1]';
 lp_post = X * beta_est;
 
 y_pred_samps = zeros(size(lp_post));
+y_pred = zeros(size(lp_post, 1));
 
 for i in 1:size(y_pred_samps,1)
     for j in 1:size(y_pred_samps,2)
@@ -119,24 +116,67 @@ for i in 1:size(y_pred_samps,1)
         
         y_pred_samps[i,j] = rand(dist)
     end
-end
-
-y_pred = zeros(size(y_pred_samps, 1));
-
-for i in 1:length(y_pred)
     
-    p1 = mean(y_pred_samps[i,:] .== 1)
-    p2 = mean(y_pred_samps[i,:] .== 2)
-    p3 = mean(y_pred_samps[i,:] .== 3)
-    probs = [p1, p2, p3]
-    
+    probs = [mean(y_pred_samps[i,:] .== 1), mean(y_pred_samps[i,:] .== 2), mean(y_pred_samps[i,:] .== 3)]
     y_pred[i] = sum((probs .== maximum(probs)) .* [1, 2, 3])
 end
 
 y_pred = convert(Array{Int64,1}, y_pred);
 countmap(y_pred)
 
-# ### Accuracy, confusion matrix
 mean(y .== y_pred)
 
 C = confusmat(3, y, y_pred)
+
+rectangle(w, h, x, y) = Shape(x .+ [0,w,w,0], y .+ [0,0,h,h])
+
+# =======  p1 =======================
+c1_est_kde = convert(Array{Float64,1} ,c1_est)
+c2_est_kde = convert(Array{Float64,1} ,c2_est)
+k1 = kde(c1_est_kde)
+k2 = kde(c2_est_kde)
+c1_mean = mean(c1_est_kde)
+c2_mean = mean(c2_est_kde)
+c1_q025, c1_q975 = quantile!(c1_est_kde, [0.025, 0.975])
+c2_q025, c2_q975 = quantile!(c2_est_kde, [0.025, 0.975])
+
+p1 = plot(k1.x, k1.density, fill = (0, 0.3, :blue), label="posterior distribution, c1", 
+          yticks = false, 
+          legend = false,
+          ylim=(0, 1.05 * maximum(vcat(k1.density, k2.density))),
+          framestyle = :box,
+          title="Posterior distributions in Julia / Turing.")
+
+plot!(k2.x, k2.density, fill = (0, 0.3, :red), label="posterior distribution, c2")
+vline!([c1_mean, c2_mean], color = :black, linestyle = :dash, label="posterior means")
+
+plot!(rectangle(c1_q975-c1_q025, 1.05 * maximum(vcat(k1.density, k2.density)), c1_q025, 0), 
+      color = :green, alpha = 0.2, label="95% Credible Interval, c1")
+plot!(rectangle(c2_q975-c2_q025, 1.05 * maximum(vcat(k1.density, k2.density)), c2_q025, 0), 
+      color = :orange, alpha = 0.2, label="95% Credible Interval, c2")
+
+x_BCI_1 = 0.15
+y_BCI_1 = 0.5
+x_BCI_2 = 1.95
+y_BCI_2 = y_BCI_1
+y_mean = 1.1
+x_c1_segm = range(c1_q025, stop = c1_q975, length=10)
+x_c2_segm = range(c2_q025, stop = c2_q975, length=10)
+y_c1_segm = repeat([y_BCI_1-0.1], length(x_c1_segm))
+annotate!(x_BCI_1, y_BCI_1, text("Bayesian Credible \n Interval (c1)", :balck, 9))
+annotate!(x_BCI_2, y_BCI_2, text("Bayesian Credible \n Interval (c2)", :balck, 9))
+
+annotate!(c1_mean + 0.3 , y_mean, text("Posterior \n mean (c1)", :balck, 9))
+annotate!(c2_mean + 0.3, y_mean, text("Posterior \n mean (c2)", :balck, 9))
+
+plot!(x_c1_segm, y_c1_segm, seriestype = :steppre, linestyle = :solid, arrow = :arrow, linealpha = 0.5, 
+      linewidth = 1, linecolor = :black)
+plot!(reverse(x_c1_segm), y_c1_segm, seriestype = :steppre, linestyle = :solid, arrow = :arrow, linealpha = 0.5, 
+      linewidth = 1, linecolor = :black)
+plot!(x_c2_segm, y_c1_segm, seriestype = :steppre, linestyle = :solid, arrow = :arrow, linealpha = 0.5, 
+      linewidth = 1, linecolor = :black)
+plot!(reverse(x_c2_segm), y_c1_segm, seriestype = :steppre, linestyle = :solid, arrow = :arrow, linealpha = 0.5, 
+      linewidth = 1, linecolor = :black)
+#savefig("posterior_plot.png" )
+
+
